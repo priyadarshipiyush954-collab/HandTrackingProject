@@ -7,7 +7,6 @@ import numpy as np
 
 from HandTrackingModule import HandDetector
 
-
 LETTERS = [
     "A", "B", "C", "D", "E", "F",
     "G", "H", "I", "J", "K", "L",
@@ -18,7 +17,7 @@ LETTERS = [
 
 
 class AnimeEffect:
-    def __init__(self, name, duration=2.2):
+    def __init__(self, name, duration=2.6):
         self.name = name
         self.duration = duration
         self.started = time.time()
@@ -70,25 +69,25 @@ def pinch_distance(lm_list):
 
 def draw_effect(frame, effect):
     h, w, _ = frame.shape
-    elapsed = time.time() - effect.started
-    ratio = min(1.0, elapsed / effect.duration)
-
+    ratio = min(1.0, (time.time() - effect.started) / effect.duration)
     overlay = frame.copy()
 
     if effect.name == "BANKAI":
-        radius = int(80 + ratio * 380)
-        cv2.circle(overlay, (w // 2, h // 2), radius, (0, 0, 230), thickness=20)
+        pulse = 0.12 * np.sin(ratio * 18)
+        radius = int((95 + ratio * 320) * (1 + pulse))
+        cv2.circle(overlay, (w // 2, h // 2), radius, (0, 0, 230), thickness=16)
+        cv2.circle(overlay, (w // 2, h // 2), int(radius * 0.65), (20, 20, 150), thickness=10)
         cv2.putText(overlay, "BANKAI", (w // 2 - 130, h // 2), cv2.FONT_HERSHEY_DUPLEX, 2, (255, 255, 255), 4)
     elif effect.name == "SHADOW CLONE":
-        offset = int(50 * np.sin(ratio * 18))
-        for i in range(5):
-            cx = w // 2 + (i - 2) * 120 + offset
-            cy = h // 2 + (i % 2) * 25
-            cv2.circle(overlay, (cx, cy), 55, (240, 240, 240), 3)
+        wave = np.sin(ratio * 24)
+        for i in range(6):
+            spread = int((i - 2.5) * 110 + wave * 25 * (i % 2 * 2 - 1))
+            cx = w // 2 + spread
+            cy = h // 2 + int(18 * np.cos(ratio * 20 + i))
+            cv2.circle(overlay, (cx, cy), 52, (240, 240, 240), 3)
         cv2.putText(overlay, "SHADOW CLONE", (w // 2 - 220, h // 2 + 120), cv2.FONT_HERSHEY_DUPLEX, 1.35, (255, 255, 255), 3)
 
-    alpha = 0.55
-    cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+    cv2.addWeighted(overlay, 0.50, frame, 0.50, 0, frame)
 
 
 def run():
@@ -97,14 +96,13 @@ def run():
 
     canvas = None
     command = ""
-    cursor_history = deque(maxlen=5)
-
-    hover_key = None
-    hover_started = None
+    cursor_history = deque(maxlen=7)
     last_draw_point = None
-    draw_enabled = False
+    trail_point = None
     last_trigger = 0
     active_effect = None
+    smooth_point = None
+    ema_alpha = 0.35
 
     while True:
         ok, frame = cap.read()
@@ -118,47 +116,53 @@ def run():
         detector.findHands(frame, draw=True)
         lm_list = detector.findPosition(frame, draw=False)
 
-        index_tip = None
-        pinch = 999
-
         if lm_list:
             index_tip = (lm_list[8][1], lm_list[8][2])
             pinch = pinch_distance(lm_list)
             cursor_history.append(index_tip)
-            smooth_x = int(sum(p[0] for p in cursor_history) / len(cursor_history))
-            smooth_y = int(sum(p[1] for p in cursor_history) / len(cursor_history))
-            smooth_point = (smooth_x, smooth_y)
+
+            avg_x = sum(p[0] for p in cursor_history) / len(cursor_history)
+            avg_y = sum(p[1] for p in cursor_history) / len(cursor_history)
+            if smooth_point is None:
+                smooth_point = (int(avg_x), int(avg_y))
+            else:
+                smooth_point = (
+                    int((1 - ema_alpha) * smooth_point[0] + ema_alpha * avg_x),
+                    int((1 - ema_alpha) * smooth_point[1] + ema_alpha * avg_y),
+                )
 
             key_boxes = draw_keyboard(frame)
             hover_key = get_hover_key(smooth_point, key_boxes)
-            key_boxes = draw_keyboard(frame, selected_idx=hover_key)
-
+            draw_keyboard(frame, selected_idx=hover_key)
             cv2.circle(frame, smooth_point, 8, (0, 255, 0), cv2.FILLED)
 
-            if pinch < 35 and hover_key is not None:
-                now = time.time()
-                if now - last_trigger > 0.35:
-                    key_val = LETTERS[hover_key]
-                    if key_val == "<":
-                        command = command[:-1]
-                    elif key_val == "_":
-                        command += " "
-                    else:
-                        command += key_val
-                    last_trigger = now
+            if pinch < 35 and hover_key is not None and time.time() - last_trigger > 0.35:
+                key_val = LETTERS[hover_key]
+                command = command[:-1] if key_val == "<" else command + (" " if key_val == "_" else key_val)
+                last_trigger = time.time()
 
-            draw_enabled = pinch < 26 and (hover_key is None)
-            if draw_enabled:
+            if pinch < 26 and hover_key is None:
                 if last_draw_point is None:
                     last_draw_point = smooth_point
-                cv2.line(canvas, last_draw_point, smooth_point, (255, 255, 255), 6)
-                last_draw_point = smooth_point
+                if trail_point is None:
+                    trail_point = smooth_point
+
+                interp_steps = max(2, int(math.hypot(smooth_point[0] - trail_point[0], smooth_point[1] - trail_point[1]) // 6))
+                for t in range(1, interp_steps + 1):
+                    x = int(trail_point[0] + (smooth_point[0] - trail_point[0]) * t / interp_steps)
+                    y = int(trail_point[1] + (smooth_point[1] - trail_point[1]) * t / interp_steps)
+                    cv2.line(canvas, last_draw_point, (x, y), (255, 255, 255), 6)
+                    last_draw_point = (x, y)
+                trail_point = smooth_point
             else:
                 last_draw_point = None
-
+                trail_point = None
         else:
             draw_keyboard(frame)
+            smooth_point = None
+            cursor_history.clear()
             last_draw_point = None
+            trail_point = None
 
         upper_cmd = command.strip().upper()
         if upper_cmd in {"BANKAI", "SHADOW CLONE"}:
