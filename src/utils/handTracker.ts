@@ -1,10 +1,15 @@
 import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision';
 import { HandData, Landmark } from '../types/tracker';
+import { GestureClassifier } from './gestureRecognizer';
 
 export class WebHandDetector {
   private landmarker: HandLandmarker | null = null;
   private isInitializing: boolean = false;
   private initError: string | null = null;
+  private classifier: GestureClassifier = new GestureClassifier();
+
+  // Velocity-adaptive smoothing filters per landmark
+  private prevSmoothedPoints: { [key: number]: { x: number; y: number } } = {};
 
   public async initialize(): Promise<boolean> {
     if (this.landmarker) return true;
@@ -17,15 +22,17 @@ export class WebHandDetector {
         'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm'
       );
 
-      // Try local task file first, fallback to googleapis CDN if needed
+      // Check if local task asset exists
       let modelAssetPath = '/hand_landmarker.task';
       try {
         const testRes = await fetch(modelAssetPath, { method: 'HEAD' });
         if (!testRes.ok) {
-          modelAssetPath = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
+          modelAssetPath =
+            'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
         }
       } catch {
-        modelAssetPath = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
+        modelAssetPath =
+          'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
       }
 
       this.landmarker = await HandLandmarker.createFromOptions(vision, {
@@ -35,32 +42,34 @@ export class WebHandDetector {
         },
         runningMode: 'VIDEO',
         numHands: 2,
-        minHandDetectionConfidence: 0.65,
-        minTrackingConfidence: 0.65,
+        minHandDetectionConfidence: 0.7,
+        minTrackingConfidence: 0.7,
       });
 
       this.isInitializing = false;
       return true;
     } catch (err: unknown) {
-      console.warn('GPU delegate failed or error loading model, trying CPU fallback...', err);
+      console.warn('GPU initialization failed, falling back to CPU delegate...', err);
       try {
         const vision = await FilesetResolver.forVisionTasks(
           'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm'
         );
         this.landmarker = await HandLandmarker.createFromOptions(vision, {
           baseOptions: {
-            modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+            modelAssetPath:
+              'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
             delegate: 'CPU',
           },
           runningMode: 'VIDEO',
           numHands: 2,
-          minHandDetectionConfidence: 0.5,
-          minTrackingConfidence: 0.5,
+          minHandDetectionConfidence: 0.6,
+          minTrackingConfidence: 0.6,
         });
         this.isInitializing = false;
         return true;
       } catch (fallbackErr: unknown) {
-        this.initError = fallbackErr instanceof Error ? fallbackErr.message : 'Failed to initialize HandLandmarker';
+        this.initError =
+          fallbackErr instanceof Error ? fallbackErr.message : 'Failed to initialize HandLandmarker';
         this.isInitializing = false;
         console.error('HandLandmarker init error:', fallbackErr);
         return false;
@@ -87,31 +96,71 @@ export class WebHandDetector {
     try {
       const results = this.landmarker.detectForVideo(videoElement, timestampMs);
       if (!results || !results.landmarks || results.landmarks.length === 0) {
+        this.classifier.reset();
         return [];
       }
 
-      return results.landmarks.map((handLandmarks) => {
-        // Pixel coordinates scaled to target canvas
-        const pixelLandmarks: Landmark[] = handLandmarks.map((lm) => ({
-          x: lm.x * targetWidth,
-          y: lm.y * targetHeight,
-          z: lm.z,
-        }));
+      return results.landmarks.map((rawLms, handIdx) => {
+        // Convert to target canvas space with velocity-adaptive smoothing
+        const smoothedLandmarks: Landmark[] = rawLms.map((lm, ptIdx) => {
+          const rawX = lm.x * targetWidth;
+          const rawY = lm.y * targetHeight;
 
-        // Hand landmarks:
-        // 4 is Thumb Tip, 8 is Index Finger Tip
-        const thumbTip = pixelLandmarks[4] || { x: 0, y: 0 };
-        const indexTip = pixelLandmarks[8] || { x: 0, y: 0 };
+          const key = handIdx * 100 + ptIdx;
+          const prev = this.prevSmoothedPoints[key];
 
-        const pinchDistance = Math.hypot(indexTip.x - thumbTip.x, indexTip.y - thumbTip.y);
-        const isPinching = pinchDistance < 42;
+          if (!prev) {
+            this.prevSmoothedPoints[key] = { x: rawX, y: rawY };
+            return { x: rawX, y: rawY, z: lm.z };
+          }
+
+          // Velocity: Euclidean distance delta
+          const distDelta = Math.hypot(rawX - prev.x, rawY - prev.y);
+
+          // Adaptive Alpha:
+          // Low velocity (< 3px) -> alpha = 0.22 (high dampening, rock-solid tremor cancellation)
+          // High velocity (> 25px) -> alpha = 0.85 (immediate response, zero lag)
+          const velocityNorm = Math.min(1.0, Math.max(0, (distDelta - 3) / 22));
+          const alpha = 0.22 + velocityNorm * 0.63;
+
+          const smoothX = prev.x + alpha * (rawX - prev.x);
+          const smoothY = prev.y + alpha * (rawY - prev.y);
+
+          this.prevSmoothedPoints[key] = { x: smoothX, y: smoothY };
+          return { x: smoothX, y: smoothY, z: lm.z };
+        });
+
+        // Key points
+        const wrist = smoothedLandmarks[0];
+        const thumbTip = smoothedLandmarks[4];
+        const indexTip = smoothedLandmarks[8];
+        const middleMcp = smoothedLandmarks[9];
+        const middleTip = smoothedLandmarks[12];
+        const ringTip = smoothedLandmarks[16];
+        const pinkyTip = smoothedLandmarks[20];
+
+        // Palm center (average of wrist & knuckle base joints)
+        const palmCenterX = (wrist.x + smoothedLandmarks[5].x + middleMcp.x + smoothedLandmarks[17].x) / 4;
+        const palmCenterY = (wrist.y + smoothedLandmarks[5].y + middleMcp.y + smoothedLandmarks[17].y) / 4;
+        const palmSize = Math.max(20, Math.hypot(wrist.x - middleMcp.x, wrist.y - middleMcp.y));
+
+        // Scale-invariant gesture detection
+        const { gesture, confidence, pinchDistance, isPinching } =
+          this.classifier.classify(smoothedLandmarks);
 
         return {
-          landmarks: pixelLandmarks,
+          landmarks: smoothedLandmarks,
+          palmCenter: { x: palmCenterX, y: palmCenterY },
+          palmSize,
           indexTip: { x: indexTip.x, y: indexTip.y },
           thumbTip: { x: thumbTip.x, y: thumbTip.y },
+          middleTip: { x: middleTip.x, y: middleTip.y },
+          ringTip: { x: ringTip.x, y: ringTip.y },
+          pinkyTip: { x: pinkyTip.x, y: pinkyTip.y },
           pinchDistance,
           isPinching,
+          gesture,
+          gestureConfidence: confidence,
         };
       });
     } catch {
@@ -119,62 +168,8 @@ export class WebHandDetector {
     }
   }
 
-  public drawLandmarks(
-    ctx: CanvasRenderingContext2D,
-    handData: HandData,
-    _width: number,
-    _height: number
-  ) {
-    const lms = handData.landmarks;
-    if (lms.length < 21) return;
-
-    // Connections between joints
-    const connections = [
-      [0, 1], [1, 2], [2, 3], [3, 4],       // Thumb
-      [0, 5], [5, 6], [6, 7], [7, 8],       // Index
-      [5, 9], [9, 10], [10, 11], [11, 12],  // Middle
-      [9, 13], [13, 14], [14, 15], [15, 16],// Ring
-      [13, 17], [17, 18], [18, 19], [19, 20],// Pinky
-      [0, 17]                               // Wrist base
-    ];
-
-    ctx.save();
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = 'rgba(34, 197, 94, 0.65)'; // Green glow lines like MediaPipe
-
-    for (const [start, end] of connections) {
-      const p1 = lms[start];
-      const p2 = lms[end];
-      ctx.beginPath();
-      ctx.moveTo(p1.x, p1.y);
-      ctx.lineTo(p2.x, p2.y);
-      ctx.stroke();
-    }
-
-    // Draw landmark joints
-    for (let i = 0; i < lms.length; i++) {
-      const pt = lms[i];
-      ctx.beginPath();
-      if (i === 4 || i === 8) {
-        // Thumb and Index tip highlighted
-        ctx.fillStyle = handData.isPinching ? '#ef4444' : '#00dcff';
-        ctx.arc(pt.x, pt.y, 7, 0, Math.PI * 2);
-      } else {
-        ctx.fillStyle = '#22c55e';
-        ctx.arc(pt.x, pt.y, 4, 0, Math.PI * 2);
-      }
-      ctx.fill();
-    }
-
-    // Connect thumb tip and index tip with a gauge line
-    ctx.beginPath();
-    ctx.setLineDash([4, 4]);
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = handData.isPinching ? '#ef4444' : 'rgba(255, 255, 255, 0.7)';
-    ctx.moveTo(handData.thumbTip.x, handData.thumbTip.y);
-    ctx.lineTo(handData.indexTip.x, handData.indexTip.y);
-    ctx.stroke();
-
-    ctx.restore();
+  public resetFilters() {
+    this.prevSmoothedPoints = {};
+    this.classifier.reset();
   }
 }

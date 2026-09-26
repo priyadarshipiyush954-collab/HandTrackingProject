@@ -1,7 +1,22 @@
 import React from 'react';
-import { Camera, MousePointer, VideoOff, RefreshCw, Palette } from 'lucide-react';
+import {
+  Camera,
+  MousePointer,
+  VideoOff,
+  Palette,
+  Sparkles,
+  Flame,
+  Wand2,
+  Rainbow,
+  Terminal,
+  Eraser,
+  Download,
+} from 'lucide-react';
+import { BrushMode } from '../types/tracker';
 
 interface ToolbarProps {
+  brushMode: BrushMode;
+  onChangeBrushMode: (mode: BrushMode) => void;
   brushColor: string;
   onChangeColor: (color: string) => void;
   brushSize: number;
@@ -10,23 +25,34 @@ interface ToolbarProps {
   onToggleWebcam: () => void;
   isSimulated: boolean;
   onToggleSimulated: () => void;
-  webcamOpacity: number;
-  onChangeWebcamOpacity: (opacity: number) => void;
+  showKeyboard: boolean;
+  onToggleKeyboard: () => void;
   isMirrored: boolean;
   onToggleMirror: () => void;
-  onRunDemoScript: () => void;
+  onClear: () => void;
+  onSaveCanvas: () => void;
 }
 
+const BRUSH_STYLES: { id: BrushMode; name: string; icon: React.ReactNode }[] = [
+  { id: 'NEON', name: 'Neon Laser', icon: <Sparkles className="w-3.5 h-3.5 text-cyan-400" /> },
+  { id: 'FIRE', name: 'Fire Dragon', icon: <Flame className="w-3.5 h-3.5 text-amber-500" /> },
+  { id: 'CELESTIAL', name: 'Celestial', icon: <Wand2 className="w-3.5 h-3.5 text-purple-400" /> },
+  { id: 'RAINBOW', name: 'Rainbow', icon: <Rainbow className="w-3.5 h-3.5 text-rose-400" /> },
+  { id: 'CYBER', name: 'Cyber Ink', icon: <Palette className="w-3.5 h-3.5 text-emerald-400" /> },
+];
+
 const PRESET_COLORS = [
-  { name: 'White', hex: '#ffffff' },
-  { name: 'Neon Cyan', hex: '#00dcff' },
+  { name: 'Neon Cyan', hex: '#06b6d4' },
   { name: 'Crimson Red', hex: '#ef4444' },
   { name: 'Electric Gold', hex: '#eab308' },
   { name: 'Sakura Pink', hex: '#ec4899' },
-  { name: 'Acid Lime', hex: '#22c55e' },
+  { name: 'Acid Lime', hex: '#10b981' },
+  { name: 'Pure White', hex: '#ffffff' },
 ];
 
 export const Toolbar: React.FC<ToolbarProps> = ({
+  brushMode,
+  onChangeBrushMode,
   brushColor,
   onChangeColor,
   brushSize,
@@ -35,115 +61,151 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onToggleWebcam,
   isSimulated,
   onToggleSimulated,
-  webcamOpacity,
-  onChangeWebcamOpacity,
+  showKeyboard,
+  onToggleKeyboard,
   isMirrored,
   onToggleMirror,
-  onRunDemoScript,
+  onClear,
+  onSaveCanvas,
 }) => {
   return (
-    <div className="bg-neutral-900/90 backdrop-blur-md border-t border-neutral-800 px-4 py-2 flex flex-wrap items-center justify-between gap-3 text-xs select-none">
-      {/* Colors & Brush Size */}
+    <footer className="w-full bg-neutral-950/95 backdrop-blur-md border-t border-neutral-800/80 px-4 py-2 flex flex-wrap items-center justify-between gap-3 text-xs z-30 select-none">
+      {/* Left: Brush Styles & Color Picker */}
       <div className="flex items-center gap-3">
-        <div className="flex items-center gap-1.5">
-          <Palette className="w-3.5 h-3.5 text-neutral-400" />
-          <span className="text-neutral-400 font-mono text-[11px] uppercase">Brush:</span>
-          <div className="flex items-center gap-1 bg-black/40 p-1 rounded-lg border border-neutral-800">
-            {PRESET_COLORS.map((c) => (
-              <button
-                key={c.hex}
-                onClick={() => onChangeColor(c.hex)}
-                title={c.name}
-                className={`w-5 h-5 rounded-full transition-transform cursor-pointer ${
-                  brushColor === c.hex ? 'scale-115 ring-2 ring-white ring-offset-1 ring-offset-neutral-900' : 'opacity-70 hover:opacity-100 hover:scale-105'
-                }`}
-                style={{ backgroundColor: c.hex }}
-              />
-            ))}
-          </div>
+        {/* Brush style tabs */}
+        <div className="flex items-center gap-1 bg-neutral-900/90 p-1 rounded-lg border border-neutral-800">
+          {BRUSH_STYLES.map((style) => (
+            <button
+              key={style.id}
+              onClick={() => onChangeBrushMode(style.id)}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-all cursor-pointer ${
+                brushMode === style.id
+                  ? 'bg-neutral-800 text-white shadow-sm'
+                  : 'text-neutral-400 hover:text-white'
+              }`}
+            >
+              {style.icon}
+              <span className="hidden sm:inline">{style.name}</span>
+            </button>
+          ))}
         </div>
 
-        {/* Thickness slider */}
-        <div className="flex items-center gap-1.5">
+        {/* Colors */}
+        <div className="flex items-center gap-1 bg-neutral-900/90 p-1 rounded-lg border border-neutral-800">
+          {PRESET_COLORS.map((c) => (
+            <button
+              key={c.hex}
+              onClick={() => onChangeColor(c.hex)}
+              title={c.name}
+              className={`w-4.5 h-4.5 rounded-full transition-transform cursor-pointer ${
+                brushColor === c.hex
+                  ? 'scale-125 ring-2 ring-white ring-offset-1 ring-offset-neutral-950'
+                  : 'opacity-70 hover:opacity-100 hover:scale-110'
+              }`}
+              style={{ backgroundColor: c.hex }}
+            />
+          ))}
+        </div>
+
+        {/* Brush Size */}
+        <div className="hidden lg:flex items-center gap-2 text-neutral-400 pl-1">
+          <span>Size:</span>
           <input
             type="range"
-            min="2"
-            max="18"
+            min="3"
+            max="24"
             value={brushSize}
             onChange={(e) => onChangeSize(Number(e.target.value))}
             className="w-16 accent-cyan-400 cursor-pointer"
-            title={`Brush size: ${brushSize}px`}
           />
-          <span className="font-mono text-neutral-400 w-6">{brushSize}px</span>
+          <span className="font-mono text-neutral-300 w-5">{brushSize}px</span>
         </div>
       </div>
 
-      {/* Camera / Feed / Mirror Controls */}
+      {/* Right: Actions, Video & Viewport Controls */}
       <div className="flex items-center gap-2">
-        {/* Camera toggle */}
+        {/* Clear Canvas */}
         <button
-          onClick={onToggleWebcam}
-          className={`px-2.5 py-1 rounded font-medium border flex items-center gap-1.5 transition-all cursor-pointer ${
-            isWebcamActive
-              ? 'bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border-neutral-700'
-              : 'bg-emerald-900/80 hover:bg-emerald-800 text-emerald-200 border-emerald-700'
-          }`}
+          onClick={onClear}
+          title="Clear canvas strokes (shortcut: C)"
+          className="px-2.5 py-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 text-neutral-300 hover:text-white transition-all flex items-center gap-1.5 cursor-pointer"
         >
-          {isWebcamActive ? <VideoOff className="w-3.5 h-3.5 text-red-400" /> : <Camera className="w-3.5 h-3.5" />}
-          <span>{isWebcamActive ? 'Stop Camera' : 'Start Camera'}</span>
+          <Eraser className="w-3.5 h-3.5 text-amber-400" />
+          <span>Clear</span>
         </button>
 
-        {/* Mouse Mode toggle */}
+        {/* Save PNG */}
+        <button
+          onClick={onSaveCanvas}
+          title="Save creation as PNG"
+          className="p-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 text-neutral-300 hover:text-white transition-all cursor-pointer"
+        >
+          <Download className="w-4 h-4" />
+        </button>
+
+        {/* Toggle Air Keyboard */}
+        <button
+          onClick={onToggleKeyboard}
+          className={`px-2.5 py-1.5 rounded-lg border transition-all flex items-center gap-1.5 cursor-pointer ${
+            showKeyboard
+              ? 'bg-neutral-800 border-neutral-700 text-cyan-300'
+              : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:text-white'
+          }`}
+          title="Toggle on-screen gesture keyboard"
+        >
+          <Terminal className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline">Keyboard: {showKeyboard ? 'ON' : 'OFF'}</span>
+        </button>
+
+        {/* Mouse Simulation Mode */}
         <button
           onClick={onToggleSimulated}
-          className={`px-2.5 py-1 rounded font-medium border flex items-center gap-1.5 transition-all cursor-pointer ${
+          className={`px-2.5 py-1.5 rounded-lg border transition-all flex items-center gap-1.5 cursor-pointer ${
             isSimulated
-              ? 'bg-cyan-950 border-cyan-800 text-cyan-300'
-              : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-300 border-neutral-700'
+              ? 'bg-cyan-950/60 border-cyan-700 text-cyan-300'
+              : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:text-white'
           }`}
-          title="Enable mouse/touch simulation mode (Click/Space to pinch)"
+          title="Enable mouse simulation mode (Click/Space to pinch, 1-7 keys for gestures)"
         >
           <MousePointer className="w-3.5 h-3.5" />
-          <span>Mouse Mode: {isSimulated ? 'ON' : 'OFF'}</span>
+          <span className="hidden sm:inline">Mouse Mode</span>
         </button>
 
-        {/* Mirror Feed */}
+        {/* Flip Mirror */}
         <button
           onClick={onToggleMirror}
-          className={`px-2 py-1 rounded border text-neutral-300 hover:bg-neutral-800 transition-all cursor-pointer ${
-            isMirrored ? 'border-cyan-800 bg-neutral-800 text-cyan-300' : 'border-neutral-700 bg-neutral-900'
+          className={`px-2 py-1.5 rounded-lg border transition-all cursor-pointer ${
+            isMirrored
+              ? 'bg-neutral-800 border-neutral-700 text-cyan-300'
+              : 'bg-neutral-900 border-neutral-800 text-neutral-400'
           }`}
-          title="Mirror video feed horizontally"
+          title="Flip video mirror horizontally"
         >
-          Flip Mirror
+          Flip
         </button>
 
-        {/* Video feed opacity slider */}
-        {isWebcamActive && (
-          <div className="hidden md:flex items-center gap-1.5 text-neutral-400">
-            <span>Video Opacity:</span>
-            <input
-              type="range"
-              min="0.1"
-              max="1.0"
-              step="0.05"
-              value={webcamOpacity}
-              onChange={(e) => onChangeWebcamOpacity(Number(e.target.value))}
-              className="w-16 accent-cyan-400 cursor-pointer"
-            />
-          </div>
-        )}
-
-        {/* Demo Hand auto-play */}
+        {/* Camera Toggle */}
         <button
-          onClick={onRunDemoScript}
-          className="px-2.5 py-1 rounded bg-gradient-to-r from-purple-700 to-indigo-700 hover:from-purple-600 hover:to-indigo-600 text-white font-medium border border-purple-500/50 flex items-center gap-1 active:scale-95 transition-all cursor-pointer"
-          title="Run automated hand demo to type BANKAI and draw"
+          onClick={onToggleWebcam}
+          className={`px-3 py-1.5 rounded-lg font-medium border flex items-center gap-1.5 transition-all cursor-pointer ${
+            isWebcamActive
+              ? 'bg-red-950/50 hover:bg-red-900/50 text-red-200 border-red-800/80'
+              : 'bg-emerald-950/60 hover:bg-emerald-900/60 text-emerald-200 border-emerald-700/80'
+          }`}
         >
-          <RefreshCw className="w-3 h-3" />
-          <span>Auto Demo</span>
+          {isWebcamActive ? (
+            <>
+              <VideoOff className="w-3.5 h-3.5 text-red-400" />
+              <span>Stop Cam</span>
+            </>
+          ) : (
+            <>
+              <Camera className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Start Cam</span>
+            </>
+          )}
         </button>
       </div>
-    </div>
+    </footer>
   );
 };

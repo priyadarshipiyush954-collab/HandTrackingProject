@@ -1,47 +1,45 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useCallback } from 'react';
 import { WebHandDetector } from '../utils/handTracker';
 import { getKeyBoxes, getHoverKey, drawKeyboardOnCanvas } from '../utils/keyboard';
-import { drawAnimeEffect, createEffectParticles } from '../utils/animeRenderer';
-import { playKeyClick, playBankaiSound, playShadowCloneSound, playClearSound } from '../utils/audio';
-import { AnimeEffectInstance, HandData, KeyBox, LETTERS } from '../types/tracker';
-import confetti from 'canvas-confetti';
+import { playGestureSound, playKeyClick, playClearSound } from '../utils/audio';
+import { VisualEffectsEngine } from '../utils/effectsEngine';
+import { renderStrokeSegment } from '../utils/brushStyles';
+import { BrushMode, HandData, HandGesture, KeyBox, LETTERS } from '../types/tracker';
 
 interface HandCanvasBoardProps {
+  brushMode: BrushMode;
   brushColor: string;
   brushSize: number;
   isWebcamActive: boolean;
   onWebcamStateChange: (active: boolean) => void;
   isSimulated: boolean;
-  webcamOpacity: number;
   isMirrored: boolean;
+  showKeyboard: boolean;
   soundEnabled: boolean;
-  command: string;
-  setCommand: React.Dispatch<React.SetStateAction<string>>;
+  activeGesture: HandGesture;
+  setActiveGesture: (g: HandGesture) => void;
   setHandDetected: (detected: boolean) => void;
   setFps: (fps: number) => void;
-  setPinchDistance: (dist: number) => void;
-  setIsPinching: (pinching: boolean) => void;
-  manualTriggerEffect: AnimeEffectInstance | null;
-  onClearEffect: () => void;
+  command: string;
+  setCommand: React.Dispatch<React.SetStateAction<string>>;
 }
 
 export const HandCanvasBoard: React.FC<HandCanvasBoardProps> = ({
+  brushMode,
   brushColor,
   brushSize,
   isWebcamActive,
   onWebcamStateChange,
   isSimulated,
-  webcamOpacity,
   isMirrored,
+  showKeyboard,
   soundEnabled,
-  command,
-  setCommand,
+  activeGesture,
+  setActiveGesture,
   setHandDetected,
   setFps,
-  setPinchDistance,
-  setIsPinching,
-  manualTriggerEffect,
-  onClearEffect,
+  command,
+  setCommand,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const displayCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -49,48 +47,25 @@ export const HandCanvasBoard: React.FC<HandCanvasBoardProps> = ({
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const detectorRef = useRef<WebHandDetector | null>(null);
+  const effectsEngineRef = useRef<VisualEffectsEngine>(new VisualEffectsEngine());
   const animFrameIdRef = useRef<number | null>(null);
 
-  // Tracking state refs for 60fps loop without state tearing
-  const cursorHistoryRef = useRef<{ x: number; y: number }[]>([]);
-  const smoothPointRef = useRef<{ x: number; y: number } | null>(null);
+  // Drawing state
   const lastDrawPointRef = useRef<{ x: number; y: number } | null>(null);
   const trailPointRef = useRef<{ x: number; y: number } | null>(null);
   const lastTriggerTimeRef = useRef<number>(0);
-  const activeEffectRef = useRef<AnimeEffectInstance | null>(null);
   const activeKeyIdxRef = useRef<number | null>(null);
+  const prevGestureRef = useRef<HandGesture>('IDLE');
 
-  // Mouse / Pointer fallback state
+  // Mouse / Pointer fallback
   const mousePointRef = useRef<{ x: number; y: number } | null>(null);
   const isMouseDownRef = useRef<boolean>(false);
   const isSpaceDownRef = useRef<boolean>(false);
+  const simulatedGestureRef = useRef<HandGesture>('IDLE');
 
-  // Demo automated animation state
-  const demoRunningRef = useRef<boolean>(false);
-
-  // FPS calculations
-  const lastFrameTimeRef = useRef<number>(performance.now());
+  // FPS tracking
   const frameCountRef = useRef<number>(0);
   const lastFpsUpdateRef = useRef<number>(performance.now());
-
-  // Handle manual trigger from HUD
-  useEffect(() => {
-    if (manualTriggerEffect) {
-      activeEffectRef.current = {
-        ...manualTriggerEffect,
-        particles: createEffectParticles(
-          manualTriggerEffect.name,
-          displayCanvasRef.current?.width || 800,
-          displayCanvasRef.current?.height || 600
-        ),
-      };
-      if (soundEnabled) {
-        if (manualTriggerEffect.name === 'BANKAI') playBankaiSound();
-        else playShadowCloneSound();
-      }
-      onClearEffect();
-    }
-  }, [manualTriggerEffect, soundEnabled, onClearEffect]);
 
   // Initialize WebHandDetector once
   useEffect(() => {
@@ -99,20 +74,22 @@ export const HandCanvasBoard: React.FC<HandCanvasBoardProps> = ({
     detector.initialize();
   }, []);
 
-  // Initialize persistent drawing canvas
+  // Initialize offscreen drawing canvas
   useEffect(() => {
     const dCanvas = document.createElement('canvas');
     dCanvas.width = 1280;
     dCanvas.height = 720;
-    const ctx = dCanvas.getContext('2d');
-    if (ctx) {
-      ctx.fillStyle = 'rgba(0,0,0,0)';
-      ctx.clearRect(0, 0, dCanvas.width, dCanvas.height);
-    }
     drawingCanvasRef.current = dCanvas;
   }, []);
 
-  // Setup webcam stream
+  // Sync simulated gesture from parent
+  useEffect(() => {
+    if (activeGesture !== 'IDLE' && isSimulated) {
+      simulatedGestureRef.current = activeGesture;
+    }
+  }, [activeGesture, isSimulated]);
+
+  // Webcam stream handlers
   const startCamera = useCallback(async () => {
     if (!navigator.mediaDevices?.getUserMedia) return;
     try {
@@ -131,7 +108,7 @@ export const HandCanvasBoard: React.FC<HandCanvasBoardProps> = ({
         onWebcamStateChange(true);
       }
     } catch (err) {
-      console.warn('Webcam access was denied or not available:', err);
+      console.warn('Webcam permission not granted or device unavailable:', err);
       onWebcamStateChange(false);
     }
   }, [onWebcamStateChange]);
@@ -139,7 +116,7 @@ export const HandCanvasBoard: React.FC<HandCanvasBoardProps> = ({
   const stopCamera = useCallback(() => {
     if (videoRef.current && videoRef.current.srcObject) {
       const stream = videoRef.current.srcObject as MediaStream;
-      stream.getTracks().forEach((track) => track.stop());
+      stream.getTracks().forEach((t) => t.stop());
       videoRef.current.srcObject = null;
     }
     onWebcamStateChange(false);
@@ -156,26 +133,36 @@ export const HandCanvasBoard: React.FC<HandCanvasBoardProps> = ({
     };
   }, [isWebcamActive, startCamera, stopCamera]);
 
-  // Keyboard shortcut listener ('c' to clear, 'b' for bankai, etc.)
+  // Keyboard shortcut listener
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
       if (e.key === 'c' || e.key === 'C') {
-        const dCanvas = drawingCanvasRef.current;
-        if (dCanvas) {
-          const ctx = dCanvas.getContext('2d');
-          ctx?.clearRect(0, 0, dCanvas.width, dCanvas.height);
-        }
-        setCommand('');
-        activeEffectRef.current = null;
-        if (soundEnabled) playClearSound();
+        clearCanvas();
       } else if (e.key === ' ' || e.code === 'Space') {
         isSpaceDownRef.current = true;
-      } else if (e.key === 'b' || e.key === 'B') {
-        triggerEffectNamed('BANKAI');
-      } else if (e.key === 's' || e.key === 'S') {
-        triggerEffectNamed('SHADOW CLONE');
+      } else if (e.key === '1') {
+        simulatedGestureRef.current = 'PINCH';
+        setActiveGesture('PINCH');
+      } else if (e.key === '2') {
+        simulatedGestureRef.current = 'POINT';
+        setActiveGesture('POINT');
+      } else if (e.key === '3') {
+        simulatedGestureRef.current = 'OPEN_PALM';
+        setActiveGesture('OPEN_PALM');
+      } else if (e.key === '4') {
+        simulatedGestureRef.current = 'PEACE';
+        setActiveGesture('PEACE');
+      } else if (e.key === '5') {
+        simulatedGestureRef.current = 'FIST';
+        setActiveGesture('FIST');
+      } else if (e.key === '6') {
+        simulatedGestureRef.current = 'ROCK_ON';
+        setActiveGesture('ROCK_ON');
+      } else if (e.key === '7') {
+        simulatedGestureRef.current = 'THUMBS_UP';
+        setActiveGesture('THUMBS_UP');
       }
     };
 
@@ -191,35 +178,20 @@ export const HandCanvasBoard: React.FC<HandCanvasBoardProps> = ({
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [soundEnabled, setCommand]);
+  }, [setActiveGesture]);
 
-  const triggerEffectNamed = (name: 'BANKAI' | 'SHADOW CLONE') => {
-    activeEffectRef.current = {
-      name,
-      duration: 2.6,
-      startedAt: performance.now(),
-      particles: createEffectParticles(
-        name,
-        displayCanvasRef.current?.width || 800,
-        displayCanvasRef.current?.height || 600
-      ),
-    };
-    if (soundEnabled) {
-      if (name === 'BANKAI') playBankaiSound();
-      else playShadowCloneSound();
+  const clearCanvas = () => {
+    const dCanvas = drawingCanvasRef.current;
+    if (dCanvas) {
+      const ctx = dCanvas.getContext('2d');
+      ctx?.clearRect(0, 0, dCanvas.width, dCanvas.height);
     }
-    if (name === 'BANKAI') {
-      confetti({
-        particleCount: 50,
-        spread: 80,
-        origin: { y: 0.6 },
-        colors: ['#ef4444', '#dc2626', '#111827'],
-      });
-    }
+    effectsEngineRef.current.clear();
     setCommand('');
+    if (soundEnabled) playClearSound();
   };
 
-  // Main Render & Detection Animation Loop (matches Python OpenCV run() function)
+  // Main 60FPS animation & vision render loop
   useEffect(() => {
     let isLoopRunning = true;
 
@@ -237,7 +209,7 @@ export const HandCanvasBoard: React.FC<HandCanvasBoardProps> = ({
         return;
       }
 
-      // Resize canvas to match display size
+      // Responsive viewport size
       const rect = canvas.getBoundingClientRect();
       const width = rect.width;
       const height = rect.height;
@@ -245,21 +217,22 @@ export const HandCanvasBoard: React.FC<HandCanvasBoardProps> = ({
       if (canvas.width !== width || canvas.height !== height) {
         canvas.width = width;
         canvas.height = height;
+
         if (dCanvas.width < width || dCanvas.height < height) {
-          const tempCanvas = document.createElement('canvas');
-          tempCanvas.width = dCanvas.width;
-          tempCanvas.height = dCanvas.height;
-          tempCanvas.getContext('2d')?.drawImage(dCanvas, 0, 0);
+          const temp = document.createElement('canvas');
+          temp.width = dCanvas.width;
+          temp.height = dCanvas.height;
+          temp.getContext('2d')?.drawImage(dCanvas, 0, 0);
 
           dCanvas.width = Math.max(dCanvas.width, width);
           dCanvas.height = Math.max(dCanvas.height, height);
-          dCtx.drawImage(tempCanvas, 0, 0);
+          dCtx.drawImage(temp, 0, 0);
         }
       }
 
       const now = performance.now();
 
-      // FPS tracking
+      // FPS Measurement
       frameCountRef.current++;
       if (now - lastFpsUpdateRef.current >= 500) {
         const measuredFps = Math.round((frameCountRef.current * 1000) / (now - lastFpsUpdateRef.current));
@@ -267,16 +240,34 @@ export const HandCanvasBoard: React.FC<HandCanvasBoardProps> = ({
         frameCountRef.current = 0;
         lastFpsUpdateRef.current = now;
       }
-      lastFrameTimeRef.current = now;
 
-      // 1. Clear display frame
-      ctx.fillStyle = '#0f0f13';
+      // 1. Render Dark Studio Backdrop
+      ctx.fillStyle = '#0a0a0f';
       ctx.fillRect(0, 0, width, height);
 
-      // 2. Draw webcam video feed if available (addWeighted frame logic from OpenCV)
+      // Subtle atmospheric grid
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
+      ctx.lineWidth = 1;
+      const gridSize = 48;
+      for (let x = 0; x < width; x += gridSize) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, height);
+        ctx.stroke();
+      }
+      for (let y = 0; y < height; y += gridSize) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+      }
+      ctx.restore();
+
+      // 2. Draw Webcam feed if available
       if (video && isWebcamActive && video.readyState >= 2) {
         ctx.save();
-        ctx.globalAlpha = webcamOpacity;
+        ctx.globalAlpha = 0.55;
         if (isMirrored) {
           ctx.translate(width, 0);
           ctx.scale(-1, 1);
@@ -285,17 +276,17 @@ export const HandCanvasBoard: React.FC<HandCanvasBoardProps> = ({
         ctx.restore();
       }
 
-      // 3. Process Hand Tracking or Mouse Simulation
+      // 3. Hand Detection
       let primaryHand: HandData | null = null;
 
       if (isWebcamActive && video && video.readyState >= 2 && detectorRef.current?.isReady()) {
         const hands = detectorRef.current.detectHands(video, now, width, height);
         if (hands.length > 0) {
           primaryHand = hands[0];
-          // Mirror x coordinates if display is mirrored
           if (isMirrored) {
             primaryHand.indexTip.x = width - primaryHand.indexTip.x;
             primaryHand.thumbTip.x = width - primaryHand.thumbTip.x;
+            primaryHand.palmCenter.x = width - primaryHand.palmCenter.x;
             primaryHand.landmarks.forEach((lm) => {
               lm.x = width - lm.x;
             });
@@ -303,166 +294,170 @@ export const HandCanvasBoard: React.FC<HandCanvasBoardProps> = ({
         }
       }
 
-      // If simulated / mouse mode is active or no hand detected from camera
+      // Simulation / Mouse fallback
       if (!primaryHand && isSimulated && mousePointRef.current) {
         const mx = mousePointRef.current.x;
         const my = mousePointRef.current.y;
-        const isClickOrSpace = isMouseDownRef.current || isSpaceDownRef.current;
-        const pinchDist = isClickOrSpace ? 15 : 65;
+        const isClick = isMouseDownRef.current || isSpaceDownRef.current;
+        const currentSimGesture = isClick ? 'PINCH' : simulatedGestureRef.current;
+
+        // Generate synthetic hand geometry for visualization
+        const syntheticLandmarks = [];
+        for (let i = 0; i < 21; i++) {
+          syntheticLandmarks.push({ x: mx, y: my });
+        }
 
         primaryHand = {
-          landmarks: [],
+          landmarks: syntheticLandmarks,
+          palmCenter: { x: mx, y: my + 30 },
+          palmSize: 55,
           indexTip: { x: mx, y: my },
-          thumbTip: { x: mx + (isClickOrSpace ? 8 : 45), y: my + (isClickOrSpace ? 8 : 45) },
-          pinchDistance: pinchDist,
-          isPinching: isClickOrSpace,
+          thumbTip: { x: mx + (isClick ? 6 : 28), y: my + (isClick ? 6 : 28) },
+          middleTip: { x: mx + 15, y: my - 15 },
+          ringTip: { x: mx + 30, y: my - 10 },
+          pinkyTip: { x: mx + 42, y: my - 5 },
+          pinchDistance: isClick ? 12 : 55,
+          isPinching: isClick,
+          gesture: currentSimGesture,
+          gestureConfidence: 0.98,
         };
       }
 
-      // Keyboard bounding boxes
-      const keyBoxes: KeyBox[] = getKeyBoxes(width, height);
+      // Keyboard bounding boxes (if enabled)
+      const keyBoxes: KeyBox[] = showKeyboard ? getKeyBoxes(width, height) : [];
       let hoverKey: number | null = null;
-      let smoothPoint = smoothPointRef.current;
 
       if (primaryHand) {
         setHandDetected(true);
-        setPinchDistance(primaryHand.pinchDistance);
-        setIsPinching(primaryHand.isPinching);
+        const currentGesture = primaryHand.gesture;
+        setActiveGesture(currentGesture);
 
-        // Moving-average cursor smoothing (deque size 7) + EMA (alpha 0.35) from main.py
-        const history = cursorHistoryRef.current;
-        history.push({ x: primaryHand.indexTip.x, y: primaryHand.indexTip.y });
-        if (history.length > 7) {
-          history.shift();
+        // Sound trigger on gesture transition
+        if (currentGesture !== prevGestureRef.current && currentGesture !== 'IDLE') {
+          if (soundEnabled) {
+            playGestureSound(currentGesture);
+          }
+          if (currentGesture === 'OPEN_PALM') {
+            effectsEngineRef.current.triggerShockwave(
+              primaryHand.palmCenter.x,
+              primaryHand.palmCenter.y,
+              '#10b981',
+              280
+            );
+          } else if (currentGesture === 'THUMBS_UP') {
+            effectsEngineRef.current.triggerShockwave(
+              primaryHand.thumbTip.x,
+              primaryHand.thumbTip.y,
+              '#eab308',
+              220
+            );
+          }
+          prevGestureRef.current = currentGesture;
         }
 
-        const avgX = history.reduce((sum, p) => sum + p.x, 0) / history.length;
-        const avgY = history.reduce((sum, p) => sum + p.y, 0) / history.length;
+        // Virtual keyboard interaction
+        if (showKeyboard) {
+          hoverKey = getHoverKey(primaryHand.indexTip, keyBoxes);
 
-        const emaAlpha = 0.35;
-        if (!smoothPoint) {
-          smoothPoint = { x: Math.round(avgX), y: Math.round(avgY) };
-        } else {
-          smoothPoint = {
-            x: Math.round((1 - emaAlpha) * smoothPoint.x + emaAlpha * avgX),
-            y: Math.round((1 - emaAlpha) * smoothPoint.y + emaAlpha * avgY),
-          };
-        }
-        smoothPointRef.current = smoothPoint;
+          // Tap key with pinch
+          if (
+            primaryHand.isPinching &&
+            hoverKey !== null &&
+            now - lastTriggerTimeRef.current > 320
+          ) {
+            const letter = LETTERS[hoverKey];
+            activeKeyIdxRef.current = hoverKey;
+            setTimeout(() => {
+              activeKeyIdxRef.current = null;
+            }, 140);
 
-        // Check hover over virtual keyboard
-        hoverKey = getHoverKey(smoothPoint, keyBoxes);
+            if (soundEnabled) playKeyClick();
 
-        // Draw hand landmarks if detected
-        if (detectorRef.current && primaryHand.landmarks.length > 0) {
-          detectorRef.current.drawLandmarks(ctx, primaryHand, width, height);
-        }
+            setCommand((prev) => {
+              const next = letter === '<' ? prev.slice(0, -1) : prev + (letter === '_' ? ' ' : letter);
+              return next;
+            });
 
-        // Check PINCH interactions (from main.py)
-        // 1) Pinch < 38 on keyboard -> type letter
-        const pinch = primaryHand.pinchDistance;
-        if (pinch < 38 && hoverKey !== null && (now - lastTriggerTimeRef.current > 350)) {
-          const keyVal = LETTERS[hoverKey];
-          activeKeyIdxRef.current = hoverKey;
-          setTimeout(() => {
-            activeKeyIdxRef.current = null;
-          }, 150);
-
-          if (soundEnabled) playKeyClick();
-
-          setCommand((prev) => {
-            const next = keyVal === '<' ? prev.slice(0, -1) : prev + (keyVal === '_' ? ' ' : keyVal);
-            const upper = next.trim().toUpperCase();
-            if (upper === 'BANKAI' || upper === 'SHADOW CLONE') {
-              triggerEffectNamed(upper as 'BANKAI' | 'SHADOW CLONE');
-              return '';
-            }
-            return next;
-          });
-
-          lastTriggerTimeRef.current = now;
+            lastTriggerTimeRef.current = now;
+          }
         }
 
-        // 2) Pinch < 28 away from keyboard -> Air Drawing with interpolation
-        if (pinch < 32 && hoverKey === null) {
+        // Air-Drawing when PINCHING outside keyboard
+        if (primaryHand.isPinching && hoverKey === null) {
           let lastDraw = lastDrawPointRef.current;
           let trailPoint = trailPointRef.current;
 
-          if (!lastDraw) lastDraw = smoothPoint;
-          if (!trailPoint) trailPoint = smoothPoint;
+          const currentPoint = primaryHand.indexTip;
 
-          const dist = Math.hypot(smoothPoint.x - trailPoint.x, smoothPoint.y - trailPoint.y);
-          const interpSteps = Math.max(2, Math.floor(dist / 6));
+          if (!lastDraw) lastDraw = currentPoint;
+          if (!trailPoint) trailPoint = currentPoint;
 
-          dCtx.save();
-          dCtx.strokeStyle = brushColor;
-          dCtx.lineWidth = brushSize;
-          dCtx.lineCap = 'round';
-          dCtx.lineJoin = 'round';
+          const dist = Math.hypot(currentPoint.x - trailPoint.x, currentPoint.y - trailPoint.y);
+          const steps = Math.max(2, Math.floor(dist / 5));
 
-          for (let t = 1; t <= interpSteps; t++) {
-            const x = trailPoint.x + ((smoothPoint.x - trailPoint.x) * t) / interpSteps;
-            const y = trailPoint.y + ((smoothPoint.y - trailPoint.y) * t) / interpSteps;
+          for (let t = 1; t <= steps; t++) {
+            const ix = trailPoint.x + ((currentPoint.x - trailPoint.x) * t) / steps;
+            const iy = trailPoint.y + ((currentPoint.y - trailPoint.y) * t) / steps;
 
-            dCtx.beginPath();
-            dCtx.moveTo(lastDraw.x, lastDraw.y);
-            dCtx.lineTo(x, y);
-            dCtx.stroke();
+            renderStrokeSegment(
+              dCtx,
+              lastDraw,
+              { x: ix, y: iy },
+              brushMode,
+              brushColor,
+              brushSize
+            );
 
-            lastDraw = { x, y };
+            lastDraw = { x: ix, y: iy };
           }
-          dCtx.restore();
 
           lastDrawPointRef.current = lastDraw;
-          trailPointRef.current = smoothPoint;
+          trailPointRef.current = currentPoint;
         } else {
           lastDrawPointRef.current = null;
           trailPointRef.current = null;
         }
+
+        // Plasma Beam when POINTING
+        if (primaryHand.gesture === 'POINT') {
+          ctx.save();
+          ctx.strokeStyle = 'rgba(56, 189, 248, 0.45)';
+          ctx.lineWidth = 3;
+          ctx.shadowColor = '#38bdf8';
+          ctx.shadowBlur = 15;
+          ctx.beginPath();
+          const angle = Math.atan2(
+            primaryHand.indexTip.y - primaryHand.palmCenter.y,
+            primaryHand.indexTip.x - primaryHand.palmCenter.x
+          );
+          ctx.moveTo(primaryHand.indexTip.x, primaryHand.indexTip.y);
+          ctx.lineTo(
+            primaryHand.indexTip.x + Math.cos(angle) * 160,
+            primaryHand.indexTip.y + Math.sin(angle) * 160
+          );
+          ctx.stroke();
+          ctx.restore();
+        }
       } else {
         setHandDetected(false);
-        setIsPinching(false);
-        smoothPointRef.current = null;
-        cursorHistoryRef.current = [];
+        setActiveGesture('IDLE');
+        prevGestureRef.current = 'IDLE';
         lastDrawPointRef.current = null;
         trailPointRef.current = null;
       }
 
-      // 4. Blend drawings onto display frame
+      // 4. Update Particle Physics Engine
+      effectsEngineRef.current.update(width, height, primaryHand);
+
+      // 5. Draw persistent user strokes
       ctx.drawImage(dCanvas, 0, 0);
 
-      // 5. Draw Virtual Keyboard
-      drawKeyboardOnCanvas(ctx, keyBoxes, hoverKey, activeKeyIdxRef.current);
+      // 6. Render Particles, Holographic Auras, and Hand Skeleton
+      effectsEngineRef.current.render(ctx, primaryHand);
 
-      // 6. Draw smoothed hand cursor
-      if (smoothPoint) {
-        ctx.save();
-        ctx.beginPath();
-        const cursorPinching = primaryHand?.isPinching || false;
-        ctx.fillStyle = cursorPinching ? '#ef4444' : '#22c55e';
-        ctx.shadowColor = cursorPinching ? '#ef4444' : '#22c55e';
-        ctx.shadowBlur = 12;
-        ctx.arc(smoothPoint.x, smoothPoint.y, cursorPinching ? 10 : 7, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Pulsing ring around cursor
-        ctx.beginPath();
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = cursorPinching ? '#ffffff' : 'rgba(34, 197, 94, 0.7)';
-        ctx.arc(smoothPoint.x, smoothPoint.y, cursorPinching ? 16 : 12, 0, Math.PI * 2);
-        ctx.stroke();
-
-        ctx.restore();
-      }
-
-      // 7. Render Active Anime Effect (BANKAI / SHADOW CLONE)
-      const activeEffect = activeEffectRef.current;
-      if (activeEffect) {
-        drawAnimeEffect(ctx, activeEffect, width, height, now);
-        const elapsed = (now - activeEffect.startedAt) / 1000;
-        if (elapsed > activeEffect.duration) {
-          activeEffectRef.current = null;
-        }
+      // 7. Render Virtual Keyboard (if toggled on)
+      if (showKeyboard && keyBoxes.length > 0) {
+        drawKeyboardOnCanvas(ctx, keyBoxes, hoverKey, activeKeyIdxRef.current);
       }
 
       animFrameIdRef.current = requestAnimationFrame(renderLoop);
@@ -472,26 +467,24 @@ export const HandCanvasBoard: React.FC<HandCanvasBoardProps> = ({
 
     return () => {
       isLoopRunning = false;
-      if (animFrameIdRef.current) {
-        cancelAnimationFrame(animFrameIdRef.current);
-      }
+      if (animFrameIdRef.current) cancelAnimationFrame(animFrameIdRef.current);
     };
   }, [
     isWebcamActive,
     isSimulated,
-    webcamOpacity,
     isMirrored,
+    showKeyboard,
+    soundEnabled,
+    brushMode,
     brushColor,
     brushSize,
-    soundEnabled,
-    setCommand,
+    setActiveGesture,
     setHandDetected,
     setFps,
-    setPinchDistance,
-    setIsPinching,
+    setCommand,
   ]);
 
-  // Mouse & Touch interaction handlers for pointer simulation
+  // Pointer event listeners for mouse simulation
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!displayCanvasRef.current) return;
     const rect = displayCanvasRef.current.getBoundingClientRect();
@@ -517,18 +510,12 @@ export const HandCanvasBoard: React.FC<HandCanvasBoardProps> = ({
   return (
     <div
       ref={containerRef}
-      className="relative flex-1 w-full h-full min-h-[450px] bg-neutral-950 overflow-hidden flex items-center justify-center cursor-crosshair select-none"
+      className="relative flex-1 w-full h-full bg-neutral-950 overflow-hidden flex items-center justify-center cursor-crosshair select-none"
     >
-      {/* Hidden Webcam Video Source */}
-      <video
-        ref={videoRef}
-        playsInline
-        muted
-        autoPlay
-        className="hidden"
-      />
+      {/* Hidden Webcam Feed */}
+      <video ref={videoRef} playsInline muted autoPlay className="hidden" />
 
-      {/* Main Interactive Canvas */}
+      {/* Main Canvas Viewport */}
       <canvas
         ref={displayCanvasRef}
         onPointerMove={handlePointerMove}
