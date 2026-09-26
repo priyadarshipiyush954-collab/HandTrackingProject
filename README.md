@@ -1,99 +1,90 @@
-# Aetheria — Hand Gesture & Vision Studio
+# Python Hand Tracking Gesture & Air-Drawing Studio
 
-A high-performance in-browser computer vision application that turns your webcam into an interactive magic canvas. Powered by MediaPipe 21-joint 3D hand tracking, velocity-adaptive filtering, particle physics, and generative Web Audio synthesis.
+A computer vision application built with **Python 3.10+**, **OpenCV**, and **MediaPipe**. Features 21-joint 3D hand tracking, scale-invariant gesture recognition, velocity-adaptive smoothing, dynamic air-drawing, virtual typing, and special effects (*Bankai*, *Shadow Clone*, *Fire Dragon*, *Sakura Domain*, and *Supernova*).
 
----
-
-## ✨ Features
-
-- **7 Real-Time Hand Gestures**: Scale-invariant recognition triggers distinct physical forces, visual effects, and audio tones.
-- **Velocity-Adaptive Smoothing Filter**:
-  - **High Velocity**: $\alpha \to 0.85$ (zero-lag tracking for fast flicks and rapid strokes).
-  - **Low Velocity**: $\alpha \to 0.22$ (rock-solid tremor dampening for precision pointing and hovering).
-- **Interactive Particle Physics**: Real-time gravitational singularities, shockwaves, sakura petal turbulence, and rising flame embers.
-- **5 Dynamic Brush Styles**:
-  - **Neon Laser**: Blooming sci-fi cyber beam.
-  - **Fire Dragon**: Scorching orange and golden flame trail.
-  - **Celestial**: Ethereal violet stardust calligraphy with shimmer sparks.
-  - **Rainbow**: Dynamic cycling chromatic spectrum.
-  - **Cyber Ink**: Crisp digital vector stroke.
-- **Generative Web Audio Synthesizer**: Custom procedural sound design for each gesture (sub-bass gravity collapses, fire roars, laser clicks, and pentatonic chimes).
-- **Holographic Hand Skeleton**: Live bone linkages, pulsing joint nodes, and floating wrist HUD badge showing current gesture and confidence.
-- **Air Keyboard Mode**: 28-key on-screen virtual keyboard with pinch-to-type detection.
-- **Mouse & Simulation Mode**: Full mouse and keyboard fallback (keys `1`–`7`, `Space`, `C`) to test every gesture even without a camera.
+This repository contains both the standalone **native Python desktop application** and an **in-browser interactive preview** for instant testing.
 
 ---
 
-## 🖐️ Gesture Reference Guide
+## 🐍 Python Project Structure
 
-| Gesture | Pose / Action | Visual Effect | Physics / Interaction | Audio Feedback |
-| :--- | :--- | :--- | :--- | :--- |
-| **Air Draw** `👌` | Pinch Thumb & Index | Glowing air-trail brush | Interpolated continuous stroke | Crisp laser click |
-| **Plasma Laser** `👉` | Extend Index finger only | Concentrated laser ray | High-precision spark stream | Sci-fi laser pulse |
-| **Force Field** `✋` | Open all 5 fingers | Expanding emerald shockwave | Radial repulsive forcefield | Cosmic resonant wave |
-| **Sakura Domain** `✌️` | Index + Middle (V-Sign) | Serene cherry blossom storm | Floating petal flutter | Pentatonic wind chime |
-| **Bankai Singularity** `✊` | Clench all fingers into Fist | Dark red lightning singularity | Gravitational black hole vortex | Sub-bass rumble |
-| **Fire Dragon** `🤘` | Index & Pinky extended | Rising flame aura | Hot buoyant heat embers | Combustion whoosh & roar |
-| **Supernova Burst** `👍` | Thumb pointing upward alone | Golden star explosion | Radial starburst fireworks | Triumphant arpeggio |
-
----
-
-## ⌨️ Keyboard Shortcuts
-
-| Key | Action |
-| :--- | :--- |
-| **`C`** | Clear canvas strokes and particle effects |
-| **`Space` / Click** | Simulate pinch (in Mouse Mode) |
-| **`1`** | Trigger **Air Draw** (`PINCH`) |
-| **`2`** | Trigger **Plasma Laser** (`POINT`) |
-| **`3`** | Trigger **Force Field** (`OPEN_PALM`) |
-| **`4`** | Trigger **Sakura Domain** (`PEACE`) |
-| **`5`** | Trigger **Bankai Singularity** (`FIST`) |
-| **`6`** | Trigger **Fire Dragon** (`ROCK_ON`) |
-| **`7`** | Trigger **Supernova Burst** (`THUMBS_UP`) |
-
----
-
-## 🛠️ Architecture & Tech Stack
-
-- **Framework**: [React 19](https://react.dev/) + [TypeScript](https://www.typescriptlang.org/)
-- **Bundler**: [Vite](https://vitejs.dev/)
-- **Styling**: [Tailwind CSS v4](https://tailwindcss.com/)
-- **Hand Tracking**: [@mediapipe/tasks-vision](https://developers.google.com/mediapipe/solutions/vision/hand_landmarker) (21-joint 3D hand landmark model with GPU and CPU fallback delegates)
-- **Audio Engine**: Native [Web Audio API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Audio_API) (procedural oscillator networks, biquad filters, and noise buffers)
-- **Rendering**: Multi-layer HTML5 Canvas with dual buffering and vector interpolation
-
----
-
-## 🚀 Getting Started
-
-### Prerequisites
-
-- Node.js 18+ or 20+
-- A modern browser with WebGL and Camera permissions enabled (Chrome, Edge, Brave, Firefox, or Safari)
-
-### Installation
-
-```bash
-# Install dependencies
-npm install
-
-# Start local development server on port 3000
-npm run dev
 ```
-
-Open `http://localhost:3000` in your browser.
-
-### Building for Production
-
-```bash
-npm run build
+├── main.py                   # Master application: OpenCV video loop, drawing, keyboard, effects
+├── HandTrackingModule.py     # Core detector: MediaPipe hands, velocity-adaptive smoothing
+├── gesture_engine.py         # Particle physics & anime animation renderer in Python
+├── HandtrackingMinimum.py    # Minimal standalone hand tracking script
+├── test.py                   # Diagnostic environment verification script
+├── requirements.txt          # Python package dependencies
+└── src/                      # Interactive in-browser web companion and code inspector
 ```
 
 ---
 
-## 💡 Tips for Optimal Tracking Accuracy
+## 🚀 Quickstart (Python)
 
-1. **Lighting**: Ensure your hand is well-illuminated and distinct from your background.
-2. **Camera Distance**: Position your hand approximately 1.5 to 3 feet (45–90 cm) away from the webcam.
-3. **Finger Separation**: When changing gestures, hold fingers clearly in their intended pose for 1–2 frames for instant latching.
+### 1. Requirements
+
+- Python 3.10 or higher
+- A webcam connected to your machine
+
+### 2. Install Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+*(Or manually install `pip install opencv-python mediapipe numpy`)*
+
+### 3. Verify Environment
+
+```bash
+python3 test.py
+```
+
+### 4. Run the Python Application
+
+```bash
+python3 main.py
+```
+
+Optional CLI flags:
+```bash
+python3 main.py --camera 0 --width 1280 --height 720
+```
+
+---
+
+## 🖐️ Hand Gestures Reference
+
+| Gesture | How to Perform | In-App Action | Effect |
+| :--- | :--- | :--- | :--- |
+| **Air Draw** `👌` | Pinch Thumb tip & Index tip together | Air-draw glowing laser trails or type on keyboard | Continuous glowing brush |
+| **Plasma Laser** `👉` | Extend Index finger only (others curled) | Focus directional laser beam | High-velocity sparks |
+| **Force Field** `✋` | Open all 5 fingers outward | Repulsive cosmic forcefield | Pushes floating particles away |
+| **Sakura Domain** `✌️` | Index + Middle extended (V-sign) | Summon Sakura storm | Drifting cherry petals |
+| **Bankai Singularity** `✊` | Clench all fingers into a Fist | Dark matter black hole | Gravitational vortex & dark lightning |
+| **Fire Dragon** `🤘` | Index & Pinky extended (Rock-on) | Dragon firestorm | Rising orange & yellow flame embers |
+| **Supernova Burst** `👍` | Thumb pointing upward alone | Golden star explosion | Radial fireworks shower |
+
+---
+
+## ⌨️ Desktop Controls & Hotkeys
+
+- **Pinch Index + Thumb**: Draw or tap virtual keyboard keys.
+- **`C`**: Clear canvas drawing.
+- **`K`**: Toggle the on-screen virtual keyboard.
+- **`S`**: Save screenshot to PNG (`capture_<timestamp>.png`).
+- **`Q` / `ESC`**: Quit the application.
+
+---
+
+## 🧠 Python Architecture & Algorithms
+
+### 1. Velocity-Adaptive Dual-Mode Smoothing
+To eliminate camera sensor noise and hand tremor without introducing drawing lag:
+$$\alpha = 0.22 + \min\left(1.0, \max\left(0.0, \frac{\Delta d - 3.0}{22.0}\right)\right) \times 0.63$$
+- **Hovering / Slow movement ($\Delta d \le 3\text{px}$)**: $\alpha = 0.22$ (high dampening, rock-solid tremor cancellation).
+- **Fast flicks ($\Delta d \ge 25\text{px}$)**: $\alpha \to 0.85$ (instant response, zero smoothing delay).
+
+### 2. Scale-Invariant Geometry
+Landmark distances are normalized by **Palm Span** ($Wrist \to Middle\ MCP$). Gestures are recognized consistently regardless of distance from the camera or user hand size.
