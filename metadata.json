@@ -1,0 +1,10 @@
+{
+  "name": "Hand Tracking Anime Board",
+  "description": "Webcam hand-tracking air-drawing board with virtual gesture keyboard, smooth cursor smoothing, and animated anime effects like BANKAI and SHADOW CLONE.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
